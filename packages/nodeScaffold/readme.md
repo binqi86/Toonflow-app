@@ -9,7 +9,7 @@ packages/nodeScaffold/
   src/useNode.ts           当前节点状态、端口、输出、事件和文件能力
   src/nodeSkeleton.vue     共用标题栏、内容 Card 和左右连接点
   src/values.ts            固定输出结构与类型校验
-  src/nodeInputs.ts             按目标节点、输入端口读取上游值
+  src/nodeInputs.ts        按目标节点、输入端口读取上游值
   src/nodeEvent.ts         统一注册节点输入、输出、删除和连接校验事件
   src/workspaceFiles.ts    使用宿主文件能力、上传节点文件
 packages/nodes/imageNode/
@@ -61,7 +61,7 @@ const { refList, referenceMentions, setReferencePreview, removeReference } = use
 </template>
 
 <script setup lang="ts">
-import { ElInput as elInput } from "element-plus";
+import { ElInput } from "element-plus";
 import { nodeSkeleton, useNode, type NodeHandle } from "@toonflow/nodes-scaffold/runtime";
 
 defineOptions({
@@ -162,7 +162,7 @@ await ai.generate({
 - `ai.generateImage(input, signal?)`：非流式生成并落盘，返回 `{ path, mimeType, mediaType: "image" }[]`。`input` 包含工作区绝对路径 `directory`、`providerId`、`modelId`、`prompt`、工作区相对目录 `outputDirectory`；可传 `images: { path, mimeType }[]`、`ratio`、`size`。图片参考只传工作区相对路径，由后端读取。
 - `ai.generateVideo(input, signal?)`：视频生成并落盘，返回 `{ path, mimeType, mediaType: "video" }[]`。基础字段同图片生成；使用 `duration`、`resolution`、`ratio`、`generateAudio`、`mode` 配置视频，可传 `images`、`videos`、`audios` 和 `firstFrame`、`lastFrame`，素材均为工作区内 `{ path, mimeType }` 引用。
 
-`directory` 在生成前通过 `files.getWorkspaceFiles().list()` 取得快照，`outputDirectory` 使用 `assets/${id}`。结果可直接赋给 `outputs.value.image = { dataType: "IMAGE", value: { url: result.path, mimeType: result.mimeType } }`；使用 `files.useFileUrl` 预览。图片生成节点会合并文本参考、传入图片参考，成功后替换输出，失败或停止时保留上次图片；删除节点前取消请求，并清理其文件目录。
+`directory` 在生成前通过 `files.getWorkspaceFiles().list()` 取得快照，`outputDirectory` 使用 `assets/${id}`。结果可直接赋给 `outputs.value.image = { dataType: "IMAGE", value: { url: result.path, mimeType: result.mimeType } }`；使用 `files.useFileUrl` 预览。图片生成节点会合并文本参考、传入图片参考，成功后替换输出，失败或停止时保留上次图片；删除节点前取消请求。当前画布为支持撤销而保留节点素材，不随节点删除物理文件。
 
 ### Agent 节点函数
 
@@ -187,7 +187,7 @@ nodeTools.register({
 });
 ```
 
-函数名使用小驼峰，上例显示为 `node:setText`；同名函数通过 `nodeId` 区分。启用 `packages/tools/canvas` 的“画布操作”插件后，Agent 通过 `getCanvas` 查询节点、端口和 `nodeTools` 清单，并通过统一的 `nodeTools` 调用：
+函数名使用小驼峰，上例显示为 `node:setText`；同名函数通过 `nodeId` 区分。启用 `packages/tools/canvas` 的“画布操作”插件后，Agent 用 `findCanvasNodes` 查找节点，用 `getCanvasNodes` 按需查询节点字段与端口，用 `getNodeTools({ nodeIds: [...] })` 查询目标函数的完整 schema，并通过统一的 `nodeTools` 调用：
 
 ```json
 { "nodeId": "具体节点 ID", "name": "node:setText", "args": { "text": "新内容" } }
@@ -197,11 +197,15 @@ nodeTools.register({
 
 回调支持同步或异步，返回值须可 JSON 序列化；没有返回值时传回 `null`，抛错会作为工具执行错误返回 Agent。
 
-注册表共用宿主 Vue Flow 实例，不写入画布 JSON。每次画布操作读取当前注册表，`addNode` 返回新增节点的 `nodeTools` 清单，可在同一轮 Agent 对话中继续调用。节点卸载后的函数不可调用；手动切换画布会终止当前对话绑定的旧画布操作；Agent 通过 `addCanvas` 新建或 `switchCanvas` 切换后，仅发起操作的对话重新绑定新画布并可在同轮继续调用。修改通过 Vue Flow 实例完成，前端执行后等待现有画布保存流程完成再返回结果。
+注册表共用宿主 Vue Flow 实例，不写入画布 JSON。每次函数查询读取当前注册表；`addNode` 返回新增节点信息，可在同一轮 Agent 对话中通过 `getNodeTools` 查询并调用。节点卸载后的函数不可调用；手动切换画布会终止当前对话绑定的旧画布操作；Agent 通过 `addCanvas` 新建或 `switchCanvas` 切换后，仅发起操作的对话重新绑定新画布并可在同轮继续调用。修改通过 Vue Flow 实例完成，前端执行后等待现有画布保存流程完成再返回结果；读取不触发保存。
 
-`getCanvas` 同时返回工作区 `canvases` 列表（`id`、`name`）。`addCanvas({ name? })` 新建空画布并选中，省略名称时使用未占用的 `画布N`；`switchCanvas({ canvasId })` 在保存后切换画布；`renameCanvas({ canvasId?, name })` 重命名对应 JSON 文件，省略 `canvasId` 则修改激活画布，`name` 不含 `.json` 后缀。三者返回更新后的激活画布状态，新建和重命名不会覆盖已有文件。
+`getCanvas` 默认只返回画布概览，`include: ["canvases"]` 才分页返回工作区画布列表（`id`、`name`），`include: ["nodeTypes"]` 分页返回可用节点类型。`addCanvas({ name? })` 新建空画布并选中，省略名称时使用未占用的 `画布N`；`switchCanvas({ canvasId })` 在保存后切换画布；`renameCanvas({ canvasId?, name })` 重命名对应 JSON 文件，省略 `canvasId` 则修改激活画布，`name` 不含 `.json` 后缀。三者返回更新后的激活画布概览，新建和重命名不会覆盖已有文件。
 
-画布基础操作包括 `getCanvas`、`addCanvas`、`switchCanvas`、`renameCanvas`、`addNode`、`deleteNode`、`moveNode`、`renameNode`、`connectNodes`、`deleteEdge`、`selectNodes` 和 `fitCanvas`。节点内容仍通过已注册函数修改，不向 Agent 开放任意写入节点 `data`。删除会先触发节点的 `delete` 回调并清理连接边；连接复用端口方向、数据类型和节点的 `canConnect` 校验。
+画布读取包括 `getCanvas`、`findCanvasNodes`、`getCanvasNodes`、`getCanvasEdges` 和 `getNodeTools`，均有分页和 64 KiB 响应上限。检查 `hasMore/nextCursor`，保持原参数继续分页；空结果也可能尚未扫描完。`getCanvasNodes` 每批最多 20 个 ID，支持字段投影和 `dataKeys`，大值可沿 `path` 读取，以 `textOffset/textLimit` 分段读字符串、`valueOffset/valueLimit` 分页读数组或对象；返回的 `truncated` 提供续读路径及偏移。全图任务分批处理并保留摘要，不累积全部详情；函数 schema 始终完整。
+
+节点与连线每页最多扫描 2000 项，`totalNodes/totalEdges` 是画布总量而非筛选命中数，`selectedOnly` 读取现场选择状态；名称匹配全文，但列表中的名称预览最多 512 字符。详情和函数查询的 `nodeIds` 必须去重，正数 `textOffset/valueOffset` 必须配合 `path`。路径最多 64 层、JSON UTF-8 编码最多 2048 字节；`pathDepthLimit` 表示达到深度边界。结构操作的 ID 回执最多 100 项，整理、适配视口、删除分别带 `arrangedCount`、`nodeCount`、`removedEdgeCount`；`truncated` 仅表示回执缩略，不应重执行。`nodeTools` 业务返回值维持节点定义，不适用五个读取工具的 64 KiB 限制。
+
+画布基础变更包括 `addCanvas`、`switchCanvas`、`renameCanvas`、`addNode`、`deleteNodes`、`moveNodes`、`renameNodes`、`connectNodes`、`deleteEdges`、`selectNodes` 和 `fitCanvas`。节点内容仍通过已注册函数修改，不向 Agent 开放任意写入节点 `data`。删除会先触发节点的 `delete` 回调并清理连接边；连接复用端口方向、数据类型和节点的 `canConnect` 校验。
 
 异步回调可从第二个参数取得 `{ signal }`，传给 `fetch` 等操作并在修改状态前检查 `signal.throwIfAborted()`。单次调用最多等待 120 秒；取消或切换画布会停止等待，但回调内部的异步工作需要配合 signal 才能停止。浏览器直接断开且运行时未触发关闭事件时，服务端由超时清理等待。
 
@@ -277,7 +281,7 @@ nodeEvent.on("delete", async () => {
 });
 ```
 
-图片节点使用 `files.removeNodeFiles()` 清理工作区 `assets/<nodeId>/`，目录不存在视为已清理。上传期间拒绝删除，清理期间禁用上传。仅删除该节点自己的目录，不根据输出 URL 删除其它节点的文件。当前复制节点仍共享原图片路径，删除原节点的目录也会影响副本引用。
+图片节点在删除回调中调用 `files.removeNodeFiles()`。当前画布通过 `retainNodeFiles` 保留素材以支持撤销，该方法不会物理删除文件；未启用保留策略的宿主会清理工作区 `assets/<nodeId>/`，目录不存在视为已清理。上传期间拒绝删除，清理期间禁用上传。清理仅作用于该节点自己的目录，不根据输出 URL 删除其它节点的文件；复制节点仍可能共享原图片路径，宿主启用物理清理前须考虑这些引用。
 
 ## 输出值与读取工具
 
@@ -290,7 +294,7 @@ const { outputs } = useNode({
   handles: [{ id: "image", type: "source", dataType: "IMAGE" }],
 });
 // 在节点的实际加载或生成逻辑完成后赋值。
-outputs.value.image = { dataType: "IMAGE", value: { url: "/files/example.png", mimeType: "image/png" } };
+outputs.value.image = { dataType: "IMAGE", value: { url: "assets/example.png", mimeType: "image/png" } };
 ```
 
 首批输出协议如下。媒体使用文件引用，不是 ComfyUI 后端的 Python 张量；不进行数据转换。
@@ -403,9 +407,9 @@ server 从 `data/nodes` 提供节点列表 `/api/nodes/get`，并通过 `/api/no
 
 ## 新增节点
 
-1. 参考 `packages/nodes/imageNode` 在 `packages/nodes/textNode` 创建源码与配置，按新节点需求编写内容，修改 `package.json` 的包名，例如 `@toonflow/node-text`，并把 `vite.config.ts` 的节点名改为 `textNode`。
+1. 参考 `packages/nodes/imageNode`，在尚不存在的目录（例如 `packages/nodes/exampleNode`）创建源码与配置，按新节点需求编写内容，修改 `package.json` 的包名，例如 `@toonflow/node-example`，并把 `vite.config.ts` 的节点名改为 `exampleNode`。
 2. 修改 `src/index.vue`，在这个子包的 `dependencies` 中声明自己使用的 UI 框架和第三方库。需要 Sass 或其它构建插件时，加入该子包的 `devDependencies`。
-3. 根目录运行 `bun install` 和 `bun run dev:plugins`，得到 `build/nodes/textNode.umd.js` 并同步到 `data/nodes/textNode.umd.js`；启动 `bun run dev` 或刷新已打开的首页即可加载，浏览器导出为 `window.toonflowNodes.textNode`。仅生成发布产物使用 `bun run build:nodes`。
+3. 根目录运行 `bun install` 和 `bun run dev:plugins`，得到 `build/nodes/exampleNode.umd.js` 并同步到 `data/nodes/exampleNode.umd.js`；启动 `bun run dev` 或刷新已打开的首页即可加载，浏览器导出为 `window.toonflowNodes.exampleNode`。仅生成发布产物使用 `bun run build:nodes`。
 
 节点名必须唯一且使用小驼峰；显式指定名字可避免 Windows 工具链路径大小写变化影响导出名。各包的 Vite 配置只需：
 
@@ -413,8 +417,8 @@ server 从 `data/nodes` 提供节点列表 `/api/nodes/get`，并通过 `/api/no
 import { createNodeConfig } from "@toonflow/nodes-scaffold";
 
 export default createNodeConfig({
-  name: "textNode",
-  displayName: "文本节点",
+  name: "exampleNode",
+  displayName: "示例节点",
   author: "", // 填写作者名称
   github: "", // 填写作者或项目的 https://github.com/... 地址
 }, import.meta.url);
@@ -461,7 +465,7 @@ const apiKey = computed(() => String(config.value.apiKey ?? ""));
 ## 依赖和样式边界
 
 - `vue` 和 `@vue-flow/core` 是节点的 peer dependency，UMD 直接使用宿主提供的 `window.toonflowNodeHost.vue`、`.vueFlow`；节点内不创建 Vue app，`useVueFlow()` 继承所在画布。
-- `element-plus` 同样声明为 peer dependency，复用 `window.toonflowNodeHost.elementPlus`。组件从根入口按需导入，例如 `import { ElButton as elButton } from "element-plus"`；不要导入 `element-plus/es/...` 或其 CSS。宿主统一加载 Element Plus 组件与样式，节点产物不重复打包。
+- `element-plus` 同样声明为 peer dependency，复用 `window.toonflowNodeHost.elementPlus`。组件从根入口按需导入，例如 `import { ElButton } from "element-plus"`，模板使用 `<el-button>`；不要导入 `element-plus/es/...` 或其 CSS。宿主统一加载 Element Plus 组件与样式，节点产物不重复打包。
 - 文本 AI 使用的 Pi SDK 同样通过现有 external 机制复用 `window.toonflowNodeHost.ai`，包含 `runAgentLoop` 和 `createAssistantMessageEventStream`；不在各节点 UMD 中重复打包，不新增运行时或服务。节点 UMD、宿主与后端需要使用配套版本。
 - 第三方库直接引用 `@vue/runtime-core` 或 `@vue/runtime-dom` 时，也使用宿主的 Vue 导出。各节点的 Vue/VueFlow 版本必须与宿主兼容；不要引入自行内嵌 Vue 的库或直接导入 Vue 的 `dist` 产物。
 - 其它依赖随各节点独立打包；不同节点可以使用不同 UI 框架和第三方库版本，同一个库也可能重复出现在不同 UMD 中。
